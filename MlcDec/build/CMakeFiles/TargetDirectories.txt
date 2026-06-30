@@ -1,0 +1,3 @@
+/home/lcy/MulCore/MlcDec-master/build/CMakeFiles/MlcDec.dir
+/home/lcy/MulCore/MlcDec-master/build/CMakeFiles/edit_cache.dir
+/home/lcy/MulCore/MlcDec-master/build/CMakeFiles/rebuild_cache.dir

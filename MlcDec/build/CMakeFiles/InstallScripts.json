@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/lcy/MulCore/MlcDec-master/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

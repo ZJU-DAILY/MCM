@@ -1,0 +1,40 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/MlcDec.dir/link.d"
+  "CMakeFiles/MlcDec.dir/Core/CoreCube.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/CoreCube.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/KC.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/KC.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCHashTable.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCHashTable.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCTree.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCTree.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCTreeBuilder.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCTreeBuilder.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCTreeBuilder_simp.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCTreeBuilder_simp.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCore.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCore.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/MLCore_simp.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/MLCore_simp.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Core/PMLCTreeBuilder.cpp.o"
+  "CMakeFiles/MlcDec.dir/Core/PMLCTreeBuilder.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/DS/DSMLCTree.cpp.o"
+  "CMakeFiles/MlcDec.dir/DS/DSMLCTree.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/DS/DSMLCTreeBuilder.cpp.o"
+  "CMakeFiles/MlcDec.dir/DS/DSMLCTreeBuilder.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/DS/PWeightedDS.cpp.o"
+  "CMakeFiles/MlcDec.dir/DS/PWeightedDS.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Graphs/Graph.cpp.o"
+  "CMakeFiles/MlcDec.dir/Graphs/Graph.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/Graphs/MultilayerGraph.cpp.o"
+  "CMakeFiles/MlcDec.dir/Graphs/MultilayerGraph.cpp.o.d"
+  "CMakeFiles/MlcDec.dir/main.cpp.o"
+  "CMakeFiles/MlcDec.dir/main.cpp.o.d"
+  "MlcDec"
+  "MlcDec.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/MlcDec.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()
