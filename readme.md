@@ -1,12 +1,3 @@
-# Core Maintenance on Dynamic Multilayer Graphs
-
-## Introduction
-
-This repository contains the source code for Core Maintenance on Dynamic Multilayer Graphs. The baseline of decomposition used for computing MCVs (under the ``MlcDec/`` directory) can be found [here](https://github.com/MDCGraph/MlcDec/) [1]. 
-
-
-*[1] Dandan Liu, Run-An Wang, Zhaonian Zou, and Xin Huang. 2024. Fast Multilayer  Core Decomposition and Indexing. In ICDE. 2695–2708.*
-
 ## Dataset
 
 The datasets used in our experiments can be found [here](https://drive.google.com/drive/folders/1owcVszSN9wbyDSmh2h0a4nJa_m8tUmKk?usp=sharing
