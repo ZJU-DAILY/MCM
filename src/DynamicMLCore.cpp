@@ -372,6 +372,118 @@ struct AtomicDeleteStateSet {
     std::unique_ptr<std::atomic<unsigned long long>[]> checks;
 };
 
+template <typename NodeLayerMinMax>
+class HybridGroupIncrementalBuilder {
+private:
+    struct NodeState {
+        uint component_id;
+    };
+
+    struct Component {
+        bool is_star;
+        uint first;
+        uint second;
+        uint center;
+    };
+
+public:
+    HybridGroupIncrementalBuilder(uint layer,
+                                  size_t edge_count,
+                                  NodeLayerMinMax& node_layer_minmax)
+        : layer_(layer), node_layer_minmax_(node_layer_minmax) {
+        node_state_.reserve(edge_count * 2 + 1);
+        components_.reserve(edge_count);
+        extrema_cache_.reserve(edge_count * 2 + 1);
+    }
+
+    bool TryAccept(const EdgeTuple& edge) {
+        if (edge.l != layer_ || edge.u == edge.v) return false;
+
+        auto u_it = node_state_.find(edge.u);
+        auto v_it = node_state_.find(edge.v);
+        bool u_seen = u_it != node_state_.end();
+        bool v_seen = v_it != node_state_.end();
+
+        if (!u_seen && !v_seen) {
+            uint component_id = static_cast<uint>(components_.size());
+            components_.push_back(Component{false, edge.u, edge.v, UINT_MAX});
+            node_state_.emplace(edge.u, NodeState{component_id});
+            node_state_.emplace(edge.v, NodeState{component_id});
+            return true;
+        }
+
+        if (u_seen && v_seen) return false;
+
+        uint endpoint = u_seen ? edge.u : edge.v;
+        uint fresh = u_seen ? edge.v : edge.u;
+        NodeState endpoint_state = u_seen ? u_it->second : v_it->second;
+        Component& component = components_[endpoint_state.component_id];
+
+        if (component.is_star) {
+            if (component.center != endpoint) return false;
+            if (!Joint(endpoint, fresh)) return false;
+            node_state_.emplace(fresh, NodeState{endpoint_state.component_id});
+            return true;
+        }
+
+        uint other = component.first == endpoint ? component.second : component.first;
+        if (!Joint(endpoint, other) || !Joint(endpoint, fresh)) return false;
+        component.is_star = true;
+        component.center = endpoint;
+        node_state_.emplace(fresh, NodeState{endpoint_state.component_id});
+        return true;
+    }
+
+private:
+    std::pair<uint, uint> GetExtrema(uint node) {
+        auto it = extrema_cache_.find(node);
+        if (it != extrema_cache_.end()) return it->second;
+        auto extrema = node_layer_minmax_(node, layer_);
+        extrema_cache_.emplace(node, extrema);
+        return extrema;
+    }
+
+    bool Joint(uint center, uint leaf) {
+        return GetExtrema(center).first > GetExtrema(leaf).second;
+    }
+
+    uint layer_;
+    NodeLayerMinMax& node_layer_minmax_;
+    std::unordered_map<uint, NodeState> node_state_;
+    std::vector<Component> components_;
+    std::unordered_map<uint, std::pair<uint, uint>> extrema_cache_;
+};
+
+template <typename NodeLayerMinMax>
+void BuildNextHybridGroup(const std::vector<EdgeTuple>& remaining,
+                          uint layer,
+                          NodeLayerMinMax& node_layer_minmax,
+                          std::vector<EdgeTuple>& group_edges,
+                          std::vector<EdgeTuple>& next_remaining,
+                          std::vector<char>& picked) {
+    group_edges.clear();
+    next_remaining.clear();
+    picked.assign(remaining.size(), 0);
+
+    HybridGroupIncrementalBuilder<NodeLayerMinMax> builder(
+        layer, remaining.size(), node_layer_minmax);
+    group_edges.reserve(remaining.size());
+    for (size_t i = 0; i < remaining.size(); i++) {
+        if (!builder.TryAccept(remaining[i])) continue;
+        group_edges.push_back(remaining[i]);
+        picked[i] = 1;
+    }
+    if (group_edges.empty() && !remaining.empty()) {
+        group_edges.push_back(remaining[0]);
+        picked[0] = 1;
+    }
+
+    next_remaining.reserve(remaining.size() - group_edges.size());
+    for (size_t i = 0; i < remaining.size(); i++) {
+        if (!picked[i]) next_remaining.push_back(remaining[i]);
+    }
+}
+
 } 
 
 void DynamicMLCore::RestoreSnapshotForIndependentRun(const std::vector<SkylineSet>& snapshot) {
@@ -2391,38 +2503,6 @@ void DynamicMLCore::BatchInsertEdges(const std::vector<std::tuple<uint, uint, ui
             return std::pair<uint, uint>(mn, mx);
         };
 
-        auto insert_hybrid_group_valid = [&](const std::vector<EdgeTuple>& group_edges) {
-            if (group_edges.empty()) return true;
-            uint layer = group_edges[0].l;
-            std::unordered_map<uint, uint> degree;
-            degree.reserve(group_edges.size() * 2 + 1);
-            for (const auto& edge : group_edges) {
-                if (edge.l != layer) return false;
-                degree[edge.u]++;
-                degree[edge.v]++;
-            }
-            for (const auto& edge : group_edges) {
-                bool u_center = degree[edge.u] > 1;
-                bool v_center = degree[edge.v] > 1;
-                if (u_center && v_center) return false;
-            }
-            for (const auto& item : degree) {
-                uint center = item.first;
-                if (item.second <= 1) continue;
-                uint center_min = insert_node_layer_minmax(center, layer).first;
-                for (const auto& edge : group_edges) {
-                    uint leaf = UINT_MAX;
-                    if (edge.u == center) leaf = edge.v;
-                    else if (edge.v == center) leaf = edge.u;
-                    else continue;
-                    if (degree[leaf] != 1) return false;
-                    uint leaf_max = insert_node_layer_minmax(leaf, layer).second;
-                    if (center_min <= leaf_max) return false;
-                }
-            }
-            return true;
-        };
-
         std::vector<std::vector<EdgeTuple>> by_layer(L);
         for (const EdgeTuple& edge : edge_tuples) {
             by_layer[edge.l].push_back(edge);
@@ -2432,30 +2512,15 @@ void DynamicMLCore::BatchInsertEdges(const std::vector<std::tuple<uint, uint, ui
             std::vector<EdgeTuple> remaining = by_layer[layer];
             if (remaining.empty()) continue;
             total_components++;
+            std::vector<EdgeTuple> group_edges;
+            std::vector<EdgeTuple> next_remaining;
+            std::vector<char> picked;
 
             while (!remaining.empty()) {
                 auto group_build_start = std::chrono::high_resolution_clock::now();
-                std::vector<EdgeTuple> group_edges;
-                std::vector<char> picked(remaining.size(), 0);
-                group_edges.reserve(remaining.size());
-                for (size_t i = 0; i < remaining.size(); i++) {
-                    std::vector<EdgeTuple> trial = group_edges;
-                    trial.push_back(remaining[i]);
-                    if (!insert_hybrid_group_valid(trial)) continue;
-                    group_edges.push_back(remaining[i]);
-                    picked[i] = 1;
-                }
-                if (group_edges.empty()) {
-                    group_edges.push_back(remaining[0]);
-                    picked[0] = 1;
-                }
+                BuildNextHybridGroup(remaining, layer, insert_node_layer_minmax,
+                                     group_edges, next_remaining, picked);
                 total_groups++;
-
-                std::vector<EdgeTuple> next_remaining;
-                next_remaining.reserve(remaining.size() - group_edges.size());
-                for (size_t i = 0; i < remaining.size(); i++) {
-                    if (!picked[i]) next_remaining.push_back(remaining[i]);
-                }
                 auto group_build_end = std::chrono::high_resolution_clock::now();
                 double group_build_ms = std::chrono::duration_cast<std::chrono::microseconds>(
                     group_build_end - group_build_start).count() / 1000.0;
@@ -2538,38 +2603,6 @@ void DynamicMLCore::BatchDeleteEdges(const std::vector<std::tuple<uint, uint, ui
             if (mn == UINT_MAX) mn = 0;
             return std::pair<uint, uint>(mn, mx);
         };
-        auto delete_hybrid_group_valid = [&](const std::vector<EdgeTuple>& group_edges) {
-            if (group_edges.empty()) return true;
-            uint layer = group_edges[0].l;
-            std::unordered_map<uint, uint> degree;
-            degree.reserve(group_edges.size() * 2 + 1);
-            for (const auto& edge : group_edges) {
-                if (edge.l != layer) return false;
-                degree[edge.u]++;
-                degree[edge.v]++;
-            }
-            for (const auto& edge : group_edges) {
-                bool u_center = degree[edge.u] > 1;
-                bool v_center = degree[edge.v] > 1;
-                if (u_center && v_center) return false;
-            }
-            for (const auto& item : degree) {
-                uint center = item.first;
-                if (item.second <= 1) continue;
-                uint center_min = delete_node_layer_minmax(center, layer).first;
-                for (const auto& edge : group_edges) {
-                    uint leaf = UINT_MAX;
-                    if (edge.u == center) leaf = edge.v;
-                    else if (edge.v == center) leaf = edge.u;
-                    else continue;
-                    if (degree[leaf] != 1) return false;
-                    uint leaf_max = delete_node_layer_minmax(leaf, layer).second;
-                    if (center_min <= leaf_max) return false;
-                }
-            }
-            return true;
-        };
-
         unsigned long long total_groups = 0;
         unsigned long long total_components = 0;
         unsigned long long total_affected = 0;
@@ -2587,28 +2620,14 @@ void DynamicMLCore::BatchDeleteEdges(const std::vector<std::tuple<uint, uint, ui
             std::vector<EdgeTuple> remaining = by_layer[layer];
             if (remaining.empty()) continue;
             total_components++;
+            std::vector<EdgeTuple> group_edges;
+            std::vector<EdgeTuple> next_remaining;
+            std::vector<char> picked;
 
             while (!remaining.empty()) {
                 auto group_build_start = std::chrono::high_resolution_clock::now();
-                std::vector<EdgeTuple> group_edges;
-                std::vector<char> picked(remaining.size(), 0);
-                group_edges.reserve(remaining.size());
-                for (size_t i = 0; i < remaining.size(); i++) {
-                    std::vector<EdgeTuple> trial = group_edges;
-                    trial.push_back(remaining[i]);
-                    if (!delete_hybrid_group_valid(trial)) continue;
-                    group_edges.push_back(remaining[i]);
-                    picked[i] = 1;
-                }
-                if (group_edges.empty()) {
-                    group_edges.push_back(remaining[0]);
-                    picked[0] = 1;
-                }
-                std::vector<EdgeTuple> next_remaining;
-                next_remaining.reserve(remaining.size() - group_edges.size());
-                for (size_t i = 0; i < remaining.size(); i++) {
-                    if (!picked[i]) next_remaining.push_back(remaining[i]);
-                }
+                BuildNextHybridGroup(remaining, layer, delete_node_layer_minmax,
+                                     group_edges, next_remaining, picked);
                 auto group_build_end = std::chrono::high_resolution_clock::now();
                 double group_build_ms = std::chrono::duration_cast<std::chrono::microseconds>(
                     group_build_end - group_build_start).count() / 1000.0;
