@@ -1,43 +1,37 @@
+.DEFAULT_GOAL := all
+
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -march=native -msse4.1 -pthread -fopenmp
 DEPFLAGS = -MMD -MP
+BUILD = .build
 
-TARGET = run_test
-BASELINE = run_baseline
+COMMON = IterativeMLCore DynamicMLCore SkylineSet
+MLCDEC = Graphs/Graph Graphs/MultilayerGraph Core/MLCore Core/KC \
+         Core/MLCTree Core/PMLCTreeBuilder Core/MLCTreeBuilder_simp Core/MLCHashTable
 
-SRCS_TEST = main.cpp IterativeMLCore.cpp SkylineSet.cpp DynamicMLCore.cpp
-SRCS_BASELINE = run_baseline.cpp IterativeMLCore.cpp SkylineSet.cpp DynamicMLCore.cpp
-SRCS_ORIGINAL = ../MlcDec/Graphs/Graph.cpp \
-                ../MlcDec/Graphs/MultilayerGraph.cpp \
-                ../MlcDec/Core/MLCore.cpp \
-                ../MlcDec/Core/KC.cpp \
-                ../MlcDec/Core/MLCTree.cpp \
-                ../MlcDec/Core/PMLCTreeBuilder.cpp \
-                ../MlcDec/Core/MLCTreeBuilder_simp.cpp \
-                ../MlcDec/Core/MLCHashTable.cpp
+OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(COMMON))) \
+          $(addprefix $(BUILD)/MlcDec/,$(addsuffix .o,$(MLCDEC)))
+DEPS = $(OBJECTS:.o=.d) $(BUILD)/main.d $(BUILD)/run_baseline.d
 
-OBJS_TEST = $(SRCS_TEST:.cpp=.o) $(SRCS_ORIGINAL:.cpp=.o)
-OBJS_BASELINE = $(SRCS_BASELINE:.cpp=.o) $(SRCS_ORIGINAL:.cpp=.o)
-DEPS = $(sort $(OBJS_TEST:.o=.d) $(OBJS_BASELINE:.o=.d))
+.PHONY: all clean
+all: run_test run_baseline
 
-all: $(TARGET) $(BASELINE)
+run_test: $(BUILD)/main.o $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TARGET): $(OBJS_TEST)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS_TEST)
-	@echo "=================================================="
-	@echo "Build successful! Executable is ready: ./$(TARGET)"
-	@echo "=================================================="
+run_baseline: $(BUILD)/run_baseline.o $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(BASELINE): $(OBJS_BASELINE)
-	$(CXX) $(CXXFLAGS) -o $(BASELINE) $(OBJS_BASELINE)
-	@echo "=================================================="
-	@echo "Build successful! Executable is ready: ./$(BASELINE)"
-	@echo "=================================================="
+$(BUILD)/%.o: %.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
 
-%.o: %.cpp
+$(BUILD)/MlcDec/%.o: ../MlcDec/%.cpp
+	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS_TEST) $(OBJS_BASELINE) $(DEPS) $(TARGET) $(BASELINE)
+	rm -rf $(BUILD)
+	rm -f run_test run_baseline
 
 -include $(DEPS)

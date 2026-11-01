@@ -1,10 +1,7 @@
 #include "SkylineSet.h"
 #include <algorithm>
 #include <numeric>
-
-bool SkylineSet::Dominates(const std::vector<uint>& k1, const std::vector<uint>& k2) {
-    return DominatesRaw(k1.data(), k2.data(), k1.size());
-}
+#include <climits>
 
 bool SkylineSet::IsDominated(const std::vector<uint>& k_vec) const {
     return IsDominatedRaw(k_vec.data(), k_vec.size());
@@ -59,7 +56,7 @@ bool SkylineSet::IsDominatedRaw(const uint* k, uint L) const {
             if (s[4] >= k4 && s[5] >= k5 && s[6] >= k6) return true;
         }
     } else {
-        
+
         const __m128i all_ones = _mm_set1_epi32(-1);
         for (uint i = 0; i < n; i++) {
             const uint* s = data + i * L_;
@@ -188,10 +185,6 @@ bool SkylineSet::InsertKnownUndominatedRaw(const uint* k_vec, uint L) {
     return true;
 }
 
-bool SkylineSet::Contains(const std::vector<uint>& k_vec) const {
-    return ContainsRaw(k_vec.data(), k_vec.size());
-}
-
 bool SkylineSet::ContainsRaw(const uint* k, uint L) const {
     if (L_ == 0 || L != L_) return false;
     uint n = NumSCVs();
@@ -230,36 +223,6 @@ bool SkylineSet::ContainsRaw(const uint* k, uint L) const {
     return false;
 }
 
-bool SkylineSet::Remove(const std::vector<uint>& k_vec) {
-    if (L_ == 0) return false;
-    uint n = NumSCVs();
-    const uint* k = k_vec.data();
-    const uint* data = scvs_.data();
-
-    for (uint i = 0; i < n; i++) {
-        const uint* s = data + i * L_;
-        bool equal = true;
-        for (uint j = 0; j < L_; j++) {
-            if (s[j] != k[j]) { equal = false; break; }
-        }
-        if (equal) {
-            if (L_ == 2 || L_ == 3) {
-                scvs_.erase(scvs_.begin() + i * L_, scvs_.begin() + (i + 1) * L_);
-            } else {
-                
-                if (i < n - 1) {
-                    uint* dst = scvs_.data() + i * L_;
-                    const uint* src = scvs_.data() + (n - 1) * L_;
-                    std::copy(src, src + L_, dst);
-                }
-                scvs_.resize(scvs_.size() - L_);
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
 std::vector<std::vector<uint>> SkylineSet::GetSCVs() const {
     std::vector<std::vector<uint>> result;
     uint n = NumSCVs();
@@ -281,20 +244,18 @@ bool SkylineSet::IsEqual(const SkylineSet& other) const {
     if (L_ != other.L_) return L_ == 0 && other.L_ == 0;
     if (L_ == 0) return true;
 
-    
     if (L_ == 2) {
         if (scvs_.size() != other.scvs_.size()) return false;
         return std::equal(scvs_.begin(), scvs_.end(), other.scvs_.begin());
     }
 
-    
     auto sorted_flat = [](const std::vector<uint>& flat, uint L) -> std::vector<uint> {
         uint count = flat.size() / L;
         std::vector<uint> indices(count);
         std::iota(indices.begin(), indices.end(), 0);
         std::sort(indices.begin(), indices.end(), [&](uint a, uint b) {
-            return std::lexicographical_compare(flat.data() + a * L, flat.data() + (a + 1) * L,
-                                                 flat.data() + b * L, flat.data() + (b + 1) * L);
+                return std::lexicographical_compare(flat.data() + a * L, flat.data() + (a + 1) * L,
+                flat.data() + b * L, flat.data() + (b + 1) * L);
         });
         std::vector<uint> result;
         result.reserve(flat.size());

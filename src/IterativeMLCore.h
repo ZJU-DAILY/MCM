@@ -2,8 +2,6 @@
 #define ITERATIVE_ML_CORE_H
 
 #include "../MlcDec/Graphs/MultilayerGraph.h"
-#include "../MlcDec/Core/MLCTree.h"
-#include "../MlcDec/Core/PMLCTreeBuilder.h"
 #include "SkylineSet.h"
 #include <vector>
 #include <queue>
@@ -17,57 +15,6 @@
 #include <cassert>
 #include <climits>
 #include <cstddef>
-
-
-struct SCVSupportEntry {
-    struct SupporterSCVInfo {
-        uint count = 0;
-        uint first_idx = UINT_MAX;
-    };
-
-    std::vector<uint> scv;                                 
-    std::vector<std::unordered_set<uint>> dim_supporters;  
-    std::vector<std::unordered_set<uint>> dim_failers;     
-    std::vector<std::unordered_map<uint, SupporterSCVInfo>> dim_supporter_scv_info;
-    std::vector<std::vector<uint>> dim_supporter_positions; 
-    std::vector<std::vector<uint>> dim_failer_positions;    
-
-    SCVSupportEntry() = default;
-    explicit SCVSupportEntry(const std::vector<uint>& k, uint num_layers, bool with_scv_info = true)
-        : scv(k),
-          dim_supporters(num_layers),
-          dim_failers(num_layers),
-          dim_supporter_positions(num_layers),
-          dim_failer_positions(num_layers) {
-        if (with_scv_info) dim_supporter_scv_info.resize(num_layers);
-    }
-};
-
-struct ReverseSupportEntryRef {
-    uint node;
-    uint scv_idx;
-    uint dim;
-    uint support_scv_count = 0;
-    uint unique_support_scv_idx = UINT_MAX;
-};
-
-
-
-
-struct VerifyState {
-    std::vector<std::vector<uint>> supporters;   
-    std::vector<std::vector<uint>> failers;      
-    std::vector<std::vector<uint>> candidates;   
-
-    explicit VerifyState(uint num_layers)
-        : supporters(num_layers), failers(num_layers), candidates(num_layers) {}
-
-    void Clear() {
-        for (auto& s : supporters) s.clear();
-        for (auto& f : failers) f.clear();
-        for (auto& c : candidates) c.clear();
-    }
-};
 
 struct SCVSnapshot {
     const SkylineSet* view = nullptr;
@@ -172,23 +119,24 @@ struct NeighborSnapshot {
     }
 };
 
-
-
-
-
 struct LazyVerifyState {
+
     struct NeighborInfo {
         bool is_supporter = false;
-        uint fail_scv_count = 0;         
-        uint candidate_scv_start = 0;    
-        uint support_scv_idx = UINT_MAX; 
+
+        uint support_scv_idx = UINT_MAX;
     };
 
     struct LayerState {
-        std::vector<uint> support_nodes;     
-        std::vector<uint> fail_nodes;        
-        std::vector<uint> candidate_nodes;   
-        std::vector<NeighborInfo> neighbor_info; 
+        std::vector<uint> support_nodes;
+        std::vector<uint> fail_nodes;
+        std::vector<uint> candidate_nodes;
+        std::vector<NeighborInfo> neighbor_info;
+
+        void ClearInfo(uint pos) {
+            neighbor_info[pos] = NeighborInfo();
+
+        }
         uint support_count = 0;
         bool initialized = false;
 
@@ -196,26 +144,19 @@ struct LazyVerifyState {
             if (neighbor_info.size() <= pos) neighbor_info.resize(pos + 1);
             return neighbor_info[pos];
         }
-        const NeighborInfo* TryGetInfo(uint pos) const {
-            if (pos >= neighbor_info.size()) return nullptr;
-            return &neighbor_info[pos];
-        }
+
     };
 
     std::vector<LayerState> layers;
-    uint n_nodes = 0;  
 
     explicit LazyVerifyState(uint num_layers) : layers(num_layers) {}
 
-    void Init(uint n) {
-        n_nodes = n;
-    }
-
     void Clear() {
         for (auto& ls : layers) {
-            for (uint pos : ls.support_nodes) ls.neighbor_info[pos] = NeighborInfo();
-            for (uint pos : ls.fail_nodes) ls.neighbor_info[pos] = NeighborInfo();
-            for (uint pos : ls.candidate_nodes) ls.neighbor_info[pos] = NeighborInfo();
+            for (uint pos : ls.support_nodes) ls.ClearInfo(pos);
+            for (uint pos : ls.fail_nodes) ls.ClearInfo(pos);
+            for (uint pos : ls.candidate_nodes) ls.ClearInfo(pos);
+
             ls.support_nodes.clear();
             ls.fail_nodes.clear();
             ls.candidate_nodes.clear();
@@ -225,7 +166,7 @@ struct LazyVerifyState {
     }
 };
 
-struct SCVVectorHash {
+struct CandidateHash {
     size_t operator()(const std::vector<uint>& v) const {
         size_t h = 1469598103934665603ull;
         for (uint x : v) {
@@ -235,156 +176,97 @@ struct SCVVectorHash {
     }
 };
 
-using SCVVisitSet = std::unordered_set<std::vector<uint>, SCVVectorHash>;
+using CandidateSet = std::unordered_set<std::vector<uint>, CandidateHash>;
 
-struct SCVVisitTracker {
-    uint L = 0;
-    SCVVisitSet slow;
-
-    void Init(uint num_layers) {
-        L = num_layers;
-        slow.clear();
-    }
+struct CandidateTracker {
+    CandidateSet entries;
 
     void Reserve(size_t n) {
-        slow.reserve(n);
+        entries.reserve(n);
     }
 
     bool Empty() const {
-        return slow.empty();
+        return entries.empty();
     }
 
     bool Insert(const std::vector<uint>& k) {
-        return slow.insert(k).second;
+        return entries.insert(k).second;
     }
 
     bool Contains(const std::vector<uint>& k) const {
-        return slow.find(k) != slow.end();
+        return entries.find(k) != entries.end();
     }
 };
 
 class IterativeMLCore {
 public:
-    struct MemoryBreakdown {
-        size_t decomposition_bytes = 0;
-        size_t maintenance_bytes = 0;
-    };
 
-    
     explicit IterativeMLCore(MultilayerGraph& mg_, int num_threads_ = 0);
 
-    
     virtual ~IterativeMLCore() = default;
 
-    
-    
     virtual void Decompose(bool hot_start = false);
 
-    
     const SkylineSet& GetNodeSkyline(uint v) const;
 
-    
     const std::vector<SkylineSet>& GetAllSkylines() const;
-
-    MemoryBreakdown EstimateMemoryUsageBytes() const;
-
-    void IncrementalUpdateMaxC(uint v, const std::vector<uint>& new_k);
-
-    void RebuildSupportData();
 
     void RebuildAllLayerNeighborCache();
 
-    
-    bool enable_support_pruning = false;
-    bool enable_lazy_support_seed = false;
-    bool suppress_support_warnings = false;
-
-    
     double last_iter_ms = 0;
 
 protected:
-    
-    
-    
-    
-    MultilayerGraph& mg;              
-    uint L;                           
-    uint n;                           
-    int num_threads;                  
 
-    std::vector<SkylineSet> scv_sets; 
+    MultilayerGraph& mg;
+    uint L;
+    uint n;
+    int num_threads;
 
-    
-    std::vector<std::vector<SCVSupportEntry>> support_data;
+    std::vector<SkylineSet> scv_sets;
 
-    
-    std::vector<std::unordered_set<uint>> reverse_support;
-    std::vector<std::vector<ReverseSupportEntryRef>> reverse_support_entries;
-    
-    
-    std::vector<std::vector<std::unordered_map<uint, std::vector<ReverseSupportEntryRef>>>> reverse_support_entries_by_break;
-    std::vector<std::vector<std::unordered_map<uint, std::vector<ReverseSupportEntryRef>>>> reverse_support_entries_by_break_ambiguous;
-    std::vector<std::unordered_map<unsigned long long, std::vector<ReverseSupportEntryRef>>> reverse_support_entries_by_unique_break;
-
-    
-    
-    
     std::vector<std::unique_ptr<std::atomic<uint>[]>> max_c;
-    std::vector<std::vector<uint>> neighbor_hindex_cap_cache;
-    bool neighbor_hindex_cap_cache_enabled = false;
+
     std::vector<std::vector<uint>> all_layer_neighbors;
     bool all_layer_neighbors_valid = false;
-    
 
-    
     std::vector<std::unique_ptr<std::shared_mutex>> scv_rw_locks;
     std::unique_ptr<std::atomic<bool>[]> is_in_inbox;
-    
+
     std::deque<uint> shared_queue;
     mutable std::mutex shared_queue_mtx;
-    std::atomic<long long> active_task_count;   
+    std::atomic<long long> active_task_count;
 
-
-    
     void InitializeBounds();
 
-    
     void GetUniqueNeighbors(uint v, std::vector<uint>& out) const;
     const std::vector<uint>& GetCachedUniqueNeighbors(uint v, std::vector<uint>& scratch) const;
     void AddAllLayerNeighborCacheEdge(uint u, uint v);
     void RemoveAllLayerNeighborCacheEdgeIfDisconnected(uint u, uint v);
 
-    
     std::vector<SkylineSet> lower_bounds_snapshot;
     std::vector<char> lower_bounds_active;
     bool has_lower_bounds = false;
 
-    
-    std::vector<char> debug_delete_bfs_affected;
-    std::vector<SkylineSet> debug_delete_bfs_failed_sets;
     std::unordered_map<uint, std::vector<unsigned long long>> hot_start_scv_bits_by_node;
     bool hot_start_scv_filter_enabled = false;
-    bool delete_wake_use_reverse_support = false;
-    bool debug_delete_wake_enabled = false;
-    bool limit_delete_wake_to_bfs = false;
+
     std::vector<char> hot_start_wake_domain;
     bool limit_hot_start_wake_to_domain = false;
     bool fixed_refinement_dim_enabled = false;
     uint fixed_refinement_dim = UINT_MAX;
 
-    
     struct NeighborMaxCBuffer {
-        std::vector<std::vector<uint>> per_layer_maxc; 
+        std::vector<std::vector<uint>> per_layer_maxc;
         std::vector<std::vector<uint>> per_layer_fixed_maxc;
-        std::vector<uint> hindex_cap;
+
         uint fixed_dim = UINT_MAX;
         bool has_fixed_maxc = false;
-        bool has_hindex_cap = false;
+
         void Init(uint num_layers) {
-            has_hindex_cap = false;
+
             has_fixed_maxc = false;
             fixed_dim = UINT_MAX;
-            hindex_cap.clear();
+
             per_layer_maxc.resize(num_layers);
             for (auto& v : per_layer_maxc) v.clear();
             per_layer_fixed_maxc.clear();
@@ -392,12 +274,11 @@ protected:
     };
 
     void PrecomputeNeighborMaxC(uint v, NeighborMaxCBuffer& buf) const;
-    void BuildNeighborHIndexCapCache(const std::vector<uint>& nodes);
-    void ClearNeighborHIndexCapCache();
+
     void ClearHotStartSCVFilter();
     void SeedHotStartSCVFilter(const std::vector<std::pair<uint, std::vector<uint>>>& records);
     void ComputeHFromBuffer(const std::vector<uint>& current_k, const NeighborMaxCBuffer& buf,
-                            std::vector<uint>& h_vec, bool& h_pruned) const;
+        std::vector<uint>& h_vec, bool& h_pruned) const;
     void EnableFixedRefinementDim(uint dim) {
         fixed_refinement_dim_enabled = (dim < L);
         fixed_refinement_dim = fixed_refinement_dim_enabled ? dim : UINT_MAX;
@@ -410,7 +291,7 @@ protected:
         return fixed_refinement_dim_enabled && dim == fixed_refinement_dim;
     }
     bool ApplyFixedRefinementDim(const std::vector<uint>& source,
-                                 std::vector<uint>& candidate) const {
+        std::vector<uint>& candidate) const {
         if (fixed_refinement_dim_enabled && fixed_refinement_dim < L &&
             fixed_refinement_dim < candidate.size() &&
             fixed_refinement_dim < source.size()) {
@@ -422,9 +303,10 @@ protected:
         return false;
     }
     bool FixedRefinementSubtreeFails(const std::vector<uint>& current_k,
-                                     const NeighborMaxCBuffer& buf) const;
+        const NeighborMaxCBuffer& buf) const;
 
     struct RoundNodeResult {
+
         uint v = UINT_MAX;
         bool changed = false;
         uint old_scv_count = 0;
@@ -437,120 +319,44 @@ protected:
     void ProcessRoundNode(uint v, RoundNodeResult& result);
     void DecomposeHotStartByRounds(bool use_parallel);
 
-    
-    
-    
-    
-    uint GetDimLowerBound(uint v, uint d, const std::vector<uint>& current_k) const;
-    uint ComputeConditionedSnapshotUpperBound(uint v, uint split_dim,
-                                              const std::vector<uint>& current_k,
-                                              const NeighborSnapshot& snapshot,
-                                              uint current_hi) const;
-
-    
     bool CheckSupport(uint v, const std::vector<uint>& k_vec) const;
     bool CheckSupportNoLock(uint v, const std::vector<uint>& k_vec) const;
     bool CheckSupportFromSnapshot(uint v, const std::vector<uint>& k_vec,
-                                  const NeighborSnapshot& snapshot) const;
-    bool CheckSupportDim(uint v, const std::vector<uint>& k_vec, uint dim) const;
-    bool CheckSupportDimNoLock(uint v, const std::vector<uint>& k_vec, uint dim) const;
-    bool CheckSupportDimFromSnapshot(uint v, const std::vector<uint>& k_vec,
-                                     const NeighborSnapshot& snapshot, uint dim) const;
+        const NeighborSnapshot& snapshot) const;
 
-    
-    
-    void SplitSCV(uint v, const std::vector<uint>& k_vec, SkylineSet& shared_results,
-                  const VerifyState* precomputed_state = nullptr,
-                  SCVVisitTracker* visited = nullptr,
-                  const NeighborMaxCBuffer* precomputed_buf = nullptr,
-                  const NeighborSnapshot* precomputed_snapshot = nullptr,
-                  SkylineSet* completed_roots = nullptr) const;
+    void SplitSCV(uint v, const std::vector<uint>& k_vec,
+        SkylineSet& valid_results,
+        const NeighborMaxCBuffer* precomputed_buf,
+        const NeighborSnapshot* precomputed_snapshot,
+        SkylineSet* completed_roots) const;
 
-    void DFSSplit(uint v, std::vector<uint>& current_k, uint last_dim,
-                  SkylineSet& valid_results, const NeighborMaxCBuffer& buf) const;
+    void SearchOrderedSplit(uint v, std::vector<uint> lower, std::vector<uint> upper,
+        uint idx, SkylineSet& valid_results,
+        const NeighborSnapshot& snapshot,
+        const LazyVerifyState* ancestor_state,
+        const std::vector<uint>* ancestor_k,
+        uint depth, const SkylineSet* completed_roots) const;
 
-    
-    
-    
-    
-    virtual std::vector<uint> TryBinarySplit(uint v, const std::vector<uint>& k_vec,
-                                              const NeighborMaxCBuffer& buf) const {
+    virtual std::vector<uint> TryHIndexCandidate(uint, const std::vector<uint>&,
+        const NeighborMaxCBuffer&) const {
         return {};
     }
 
-    
-    void DFSSplitRoot(uint v, const std::vector<uint>& current_k, SkylineSet& valid_results,
-                      const VerifyState* precomputed_state = nullptr,
-                      const NeighborSnapshot* snapshot = nullptr) const;
-    void DFSSplitIncremental(uint v, std::vector<uint>& current_k, uint last_dim,
-                             SkylineSet& valid_results, const VerifyState& parent_state,
-                             uint changed_dim, const NeighborMaxCBuffer& buf,
-                             const NeighborSnapshot* snapshot = nullptr) const;
-
-    
-    bool VerifyAndClassify(uint v, const std::vector<uint>& k_vec, VerifyState& state,
-                           const NeighborSnapshot* snapshot = nullptr) const;
-    
-    bool VerifyIncremental(uint v, const std::vector<uint>& child_k, uint changed_dim,
-                           const VerifyState& parent_state, VerifyState& child_state,
-                           const NeighborSnapshot* snapshot = nullptr) const;
-
     void BuildNeighborSnapshotNoLock(uint v, NeighborSnapshot& snapshot) const;
     bool LazyVerifyAndClassify(uint v, const std::vector<uint>& k_vec,
-                               const NeighborSnapshot& snapshot,
-                               LazyVerifyState& state,
-                               bool stop_on_first_failure = false) const;
-    bool TrySeedLazyFailersFromSupportData(uint v, const std::vector<uint>& k_vec,
-                                           const NeighborSnapshot& snapshot,
-                                           LazyVerifyState& state) const;
-    bool LazyVerifyIncremental(uint v, const std::vector<uint>& child_k, uint changed_dim,
-                               const NeighborSnapshot& snapshot,
-                               const LazyVerifyState& parent_state,
-                               LazyVerifyState& child_state) const;
-    void DFSSplitLazyRoot(uint v, const std::vector<uint>& current_k,
-                          SkylineSet& valid_results,
-                          SCVVisitTracker* visited = nullptr,
-                          const NeighborMaxCBuffer* precomputed_buf = nullptr,
-                          const NeighborSnapshot* precomputed_snapshot = nullptr,
-                          SkylineSet* completed_roots = nullptr) const;
-    void DFSSplitLazyIncremental(uint v, std::vector<uint>& current_k, uint last_dim,
-                                  SkylineSet& valid_results,
-                                  const LazyVerifyState& parent_state,
-                                  uint changed_dim, const NeighborMaxCBuffer& buf,
-                                  const NeighborSnapshot& snapshot,
-                                  SCVVisitTracker* visited = nullptr,
-                                  uint depth = 0,
-                                  SkylineSet* completed_roots = nullptr) const;
+        const NeighborSnapshot& snapshot,
+        LazyVerifyState& state,
+        bool stop_on_first_failure = false) const;
 
-    
-    
+    bool LazyVerifyIncremental(uint v, const std::vector<uint>& child_k, uint changed_dim,
+        const NeighborSnapshot& snapshot,
+        const LazyVerifyState& parent_state,
+        LazyVerifyState& child_state) const;
+
     uint CalcHIndex(const std::vector<uint>& support_vals, uint max_bound) const;
 
-    
-    
     void UpdateMaxC(uint v);
 
-    
-    void UpdateMaxCIncremental(uint v, const std::vector<uint>& k_vec);
-
-    
-    void BuildSupportData();
-    
-    void BuildNodeSupportData(uint v);
-
-    
-    void BuildReverseSupportIndex();
-
-    bool IsSupporter(uint v, const std::vector<uint>& k, uint d, uint u) const;
-    
-    uint GetSupporterCount(uint v, const std::vector<uint>& k, uint d) const;
-    
-    const std::unordered_set<uint>* GetSupporters(uint v, const std::vector<uint>& k, uint d) const;
-
-    
-    
-    
-    unsigned long long ComputeNodeCost(uint v) const;
 };
 
-#endif 
+#endif

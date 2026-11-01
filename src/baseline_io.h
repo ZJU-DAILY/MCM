@@ -2,13 +2,13 @@
 #define BASELINE_IO_H
 
 #include "SkylineSet.h"
+#include "../MlcDec/Core/MLCTree.h"
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <string>
 #include <tuple>
 #include <sys/stat.h>
-
 
 inline std::string extract_dataset_name(const std::string& path) {
     std::string p = path;
@@ -28,12 +28,8 @@ inline void ensure_dir(const std::string& path) {
     }
 }
 
-
-
-
-
 inline void save_scvs(const std::string& filename,
-                      const std::vector<SkylineSet>& scvs, uint n, uint L) {
+    const std::vector<SkylineSet>& scvs, uint n, uint L) {
     std::ofstream out(filename, std::ios::binary);
     if (!out) { std::cerr << "Cannot open " << filename << " for writing\n"; return; }
     out.write(reinterpret_cast<const char*>(&n), sizeof(uint));
@@ -49,7 +45,7 @@ inline void save_scvs(const std::string& filename,
 }
 
 inline std::vector<SkylineSet> load_scvs(const std::string& filename,
-                                         uint n_expected, uint L_expected) {
+    uint n_expected, uint L_expected) {
     std::ifstream in(filename, std::ios::binary);
     if (!in) {
         std::cerr << "Cannot open " << filename << " for reading\n";
@@ -60,7 +56,7 @@ inline std::vector<SkylineSet> load_scvs(const std::string& filename,
     in.read(reinterpret_cast<char*>(&L), sizeof(uint));
     if (n != n_expected || L != L_expected) {
         std::cerr << "SCV file dimension mismatch: expected (" << n_expected << "," << L_expected
-                  << ") got (" << n << "," << L << ")\n";
+        << ") got (" << n << "," << L << ")\n";
         return {};
     }
     std::vector<SkylineSet> scvs(n);
@@ -76,11 +72,8 @@ inline std::vector<SkylineSet> load_scvs(const std::string& filename,
     return scvs;
 }
 
-
-
-
 inline void save_edges(const std::string& filename,
-                       const std::vector<std::tuple<uint,uint,uint>>& edges) {
+    const std::vector<std::tuple<uint,uint,uint>>& edges) {
     std::ofstream out(filename, std::ios::binary);
     if (!out) { std::cerr << "Cannot open " << filename << " for writing\n"; return; }
     uint num = static_cast<uint>(edges.size());
@@ -108,9 +101,8 @@ inline std::vector<std::tuple<uint,uint,uint>> load_edges(const std::string& fil
     return edges;
 }
 
-
 inline void extract_peeling_scvs(MLCTree& tree, std::vector<SkylineSet>& out_scvs,
-                                 uint n, uint L) {
+    uint n, uint L) {
     std::queue<Node*> q;
     if (tree.GetRoot()) q.push(tree.GetRoot());
     while (!q.empty()) {
@@ -121,16 +113,16 @@ inline void extract_peeling_scvs(MLCTree& tree, std::vector<SkylineSet>& out_scv
         Diff* diff = tree.GetDiff(curr);
         if (diff && diff->num > 0)
             for (uint j = 0; j < diff->num; j++)
-                out_scvs[diff->vtx_ptr[j]].Insert(k_vec);
+            out_scvs[diff->vtx_ptr[j]].Insert(k_vec);
         uint inc_k = tree.GetIncK(curr);
         for (uint i = inc_k; i < L; i++) {
             Node* chd = tree.GetRelChd(curr, i);
             if (chd) q.push(chd);
         }
     }
-    
+
     std::vector<uint> zero_k(L, 0);
     for (uint v = 0; v < n; v++) out_scvs[v].Insert(zero_k);
 }
 
-#endif 
+#endif

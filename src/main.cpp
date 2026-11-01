@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -15,17 +14,15 @@
 
 using namespace std;
 
-static double display_ms(double ms) {
-    return round(ms * 10.0) / 10.0;
-}
+using Clock = chrono::steady_clock;
 
-static double displayed_total_ms(double propagation_ms, double iteration_ms) {
-    return display_ms(propagation_ms) + display_ms(iteration_ms);
+static double elapsed_ms(Clock::time_point start) {
+    return chrono::duration<double, milli>(Clock::now() - start).count();
 }
 
 static bool load_metric_int(const string& metrics_file,
-                            const string& key,
-                            int& value) {
+    const string& key,
+    int& value) {
     ifstream in(metrics_file);
     string line;
     const string prefix = key + ":";
@@ -38,33 +35,12 @@ static bool load_metric_int(const string& metrics_file,
     return false;
 }
 
-static bool restore_prepared_or_snapshot(DynamicMLCore& solver,
-                                         const vector<SkylineSet>& scvs,
-                                         const string& prepared_file,
-                                         const string& label) {
-    (void)label;
-    if (solver.RestorePreparedSnapshotForIndependentRun(scvs, prepared_file)) {
-        return true;
-    }
-    solver.RestoreSnapshotForIndependentRun(scvs);
-    return false;
-}
-
 static void print_usage() {
     cerr << "Usage: ./run_test <dataset_path> [num_threads=32]\n";
 }
 
-template <typename Fn>
-static void run_silencing_cerr(Fn&& fn) {
-    ofstream devnull("/dev/null");
-    streambuf* old_cerr = cerr.rdbuf();
-    if (devnull) cerr.rdbuf(devnull.rdbuf());
-    fn();
-    cerr.rdbuf(old_cerr);
-}
-
 int main(int argc, char** argv) {
-    if (argc < 2) {
+    if (argc < 2 || argc > 3) {
         print_usage();
         return 1;
     }
@@ -73,83 +49,90 @@ int main(int argc, char** argv) {
     int num_threads = (argc >= 3) ? atoi(argv[2]) : 32;
     if (num_threads <= 0) num_threads = 32;
 
-    string dataset_name = extract_dataset_name(dataset_path);
-    string prefix = "baseline/" + dataset_name;
-    string metrics_file = prefix + "_metrics.txt";
-
-    MultilayerGraph mg;
-    mg.LoadFromFile(dataset_path);
-    uint n = mg.GetN();
-    uint L = mg.GetLayerNumber();
-    omp_set_num_threads(num_threads);
-
     int num_edges = 0;
-    if (!load_metric_int(metrics_file, "num_edges", num_edges)) {
-        cerr << "Failed to load baseline metrics. Run ./run_baseline first.\n";
-        return 1;
-    }
+    {
+        string dataset_name = extract_dataset_name(dataset_path);
+        string prefix = "baseline/" + dataset_name;
+        string metrics_file = prefix + "_metrics.txt";
 
-    vector<SkylineSet> peeling_scvs = load_scvs(prefix + "_peeling.bin", n, L);
-    vector<SkylineSet> after_insert_scvs =
+        MultilayerGraph mg;
+        mg.LoadFromFile(dataset_path);
+        uint n = mg.GetN();
+        uint L = mg.GetLayerNumber();
+        omp_set_num_threads(num_threads);
+
+        if (!load_metric_int(metrics_file, "num_edges", num_edges)) {
+            cerr << "Failed to load baseline metrics. Run ./run_baseline first.\n";
+            return 1;
+        }
+
+        auto stage_start = Clock::now();
+        vector<SkylineSet> peeling_scvs = load_scvs(prefix + "_peeling.bin", n, L);
+        const double insert_snapshot_loading_ms = elapsed_ms(stage_start);
+        stage_start = Clock::now();
+        vector<SkylineSet> after_insert_scvs =
         load_scvs(prefix + "_after_insert.bin", n, L);
-    vector<tuple<uint, uint, uint>> insert_edges =
+        const double delete_snapshot_loading_ms = elapsed_ms(stage_start);
+        vector<tuple<uint, uint, uint>> insert_edges =
         load_edges(prefix + "_insert.bin");
-    vector<tuple<uint, uint, uint>> delete_edges =
+        vector<tuple<uint, uint, uint>> delete_edges =
         load_edges(prefix + "_delete.bin");
 
-    if (peeling_scvs.empty() || after_insert_scvs.empty() ||
-        insert_edges.empty() ||
-        delete_edges.empty()) {
-        cerr << "Failed to load maintenance inputs. Run ./run_baseline first.\n";
-        return 1;
-    }
-
-    cout << "Dataset: " << dataset_name << " | Nodes: " << n
-         << " | Layers: " << L << " | Updated Edges: " << num_edges
-         << " | Threads: " << num_threads << "\n";
-
-    double insert_propagation_ms = 0.0;
-    double insert_iteration_ms = 0.0;
-    {
-        MultilayerGraph mg_insert;
-        mg_insert.LoadFromFile(dataset_path);
-        DynamicMLCore solver(mg_insert, num_threads);
-        restore_prepared_or_snapshot(solver, peeling_scvs,
-                                     prefix + "_peeling.prepared.bin",
-                                     "peeling");
-        run_silencing_cerr([&]() {
-            solver.BatchInsertEdges(insert_edges);
-        });
-        insert_propagation_ms = solver.last_bfs_ms;
-        insert_iteration_ms = solver.last_iter_ms;
-    }
-
-    double delete_propagation_ms = 0.0;
-    double delete_iteration_ms = 0.0;
-    {
-        MultilayerGraph mg_delete;
-        mg_delete.LoadFromFile(dataset_path);
-        for (const auto& e : insert_edges) {
-            DynamicMLCore::AddEdgeToGraph(mg_delete, get<0>(e), get<1>(e),
-                                          get<2>(e));
+        if (peeling_scvs.empty() || after_insert_scvs.empty() ||
+            insert_edges.empty() ||
+            delete_edges.empty()) {
+            cerr << "Failed to load maintenance inputs. Run ./run_baseline first.\n";
+            return 1;
         }
-        DynamicMLCore solver(mg_delete, num_threads);
-        restore_prepared_or_snapshot(solver, after_insert_scvs,
-                                     prefix + "_after_insert.prepared.bin",
-                                     "after_insert");
-        run_silencing_cerr([&]() {
-            solver.BatchDeleteEdges(delete_edges);
-        });
-        delete_propagation_ms = solver.last_bfs_ms;
-        delete_iteration_ms = solver.last_iter_ms;
-    }
 
-    cout << "Insert time (x" << num_edges << "): "
-         << displayed_total_ms(insert_propagation_ms, insert_iteration_ms)
-         << " ms\n";
-    cout << "Delete time (x" << num_edges << "): "
-         << displayed_total_ms(delete_propagation_ms, delete_iteration_ms)
-         << " ms\n";
+        cout << fixed << setprecision(3);
+        cout << "Dataset: " << dataset_name << " | Nodes: " << n
+        << " | Layers: " << L << " | Updated Edges: " << num_edges
+        << " | Threads: " << num_threads << "\n";
+
+        {
+            MultilayerGraph mg_insert;
+            stage_start = Clock::now();
+            mg_insert.LoadFromFile(dataset_path);
+            const double graph_loading_ms = elapsed_ms(stage_start);
+            cout << "Graph data loading time: " << graph_loading_ms << " ms\n";
+
+            stage_start = Clock::now();
+            DynamicMLCore solver(mg_insert, num_threads);
+
+            solver.RestoreSnapshot(peeling_scvs);
+            const double mcv_initialization_ms = insert_snapshot_loading_ms
+                + elapsed_ms(stage_start);
+            cout << "MCV initialization time: " << mcv_initialization_ms << " ms\n";
+
+            solver.BatchInsertEdges(insert_edges);
+            cout << "Insertion maintenance time (x" << num_edges << "): "
+            << solver.last_bfs_ms + solver.last_iter_ms << " ms\n\n";
+        }
+
+        {
+            MultilayerGraph mg_delete;
+            stage_start = Clock::now();
+            mg_delete.LoadFromFile(dataset_path);
+            const double graph_loading_ms = elapsed_ms(stage_start);
+            cout << "Graph data loading time: " << graph_loading_ms << " ms\n";
+            for (const auto& e : insert_edges) {
+                DynamicMLCore::AddEdgeToGraph(mg_delete, get<0>(e), get<1>(e),
+                    get<2>(e));
+            }
+            stage_start = Clock::now();
+            DynamicMLCore solver(mg_delete, num_threads);
+
+            solver.RestoreSnapshot(after_insert_scvs);
+            const double mcv_initialization_ms = delete_snapshot_loading_ms
+                + elapsed_ms(stage_start);
+            cout << "MCV initialization time: " << mcv_initialization_ms << " ms\n";
+
+            solver.BatchDeleteEdges(delete_edges);
+            cout << "Deletion maintenance time (x" << num_edges << "): "
+            << solver.last_bfs_ms + solver.last_iter_ms << " ms\n";
+        }
+    }
 
     return 0;
 }
